@@ -6,7 +6,7 @@ import "fhevm/abstracts/Reencrypt.sol";
 import "fhevm/lib/TFHE.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-contract ConfidentialERC20 is Reencrypt, Ownable2Step {
+contract EncryptedERC20 is Reencrypt, Ownable2Step {
     event Transfer(address indexed from, address indexed to);
     event Approval(address indexed owner, address indexed spender);
     event Mint(address indexed to, uint32 amount);
@@ -97,7 +97,7 @@ contract ConfidentialERC20 is Reencrypt, Ownable2Step {
         bytes32 publicKey,
         bytes calldata signature
     ) public view virtual onlySignedPublicKey(publicKey, signature) returns (bytes memory) {
-        require(owner == msg.sender || spender == msg.sender, "Caller must be owner or spender");
+        require(owner == msg.sender || spender == msg.sender);
         return TFHE.reencrypt(_allowance(owner, spender), publicKey);
     }
 
