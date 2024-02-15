@@ -1,11 +1,11 @@
-import { toBufferBE } from 'bigint-buffer';
-import { Signer } from 'ethers';
-import fhevmjs, { FhevmInstance } from 'fhevmjs';
-import { ethers as hethers } from 'hardhat';
+import { toBufferBE } from "bigint-buffer";
+import { Signer } from "ethers";
+import fhevmjs, { FhevmInstance } from "fhevmjs";
+import { ethers as hethers } from "hardhat";
 
-import { FHE_LIB_ADDRESS } from './generated';
-import type { Signers } from './signers';
-import { FhevmInstances } from './types';
+import { FHE_LIB_ADDRESS } from "./generated";
+import type { Signers } from "./signers";
+import { FhevmInstances } from "./types";
 
 const HARDHAT_NETWORK = process.env.HARDHAT_NETWORK;
 
@@ -43,9 +43,9 @@ export const createInstance = async (contractAddress: string, account: Signer, e
     const ret = await provider.call({
       to: FHE_LIB_ADDRESS,
       // first four bytes of keccak256('fhePubKey(bytes1)') + 1 byte for library
-      data: '0xd9d47bb001',
+      data: "0xd9d47bb001",
     });
-    const decoded = ethers.AbiCoder.defaultAbiCoder().decode(['bytes'], ret);
+    const decoded = ethers.AbiCoder.defaultAbiCoder().decode(["bytes"], ret);
     publicKey = decoded[0];
   } catch (e) {
     publicKey = undefined;
@@ -53,7 +53,7 @@ export const createInstance = async (contractAddress: string, account: Signer, e
 
   const instance = await fhevmjs.createInstance({ chainId, publicKey });
 
-  if (HARDHAT_NETWORK === 'hardhat') {
+  if (HARDHAT_NETWORK === "hardhat") {
     instance.encrypt8 = createUintToUint8ArrayFunction(8);
     instance.encrypt16 = createUintToUint8ArrayFunction(16);
     instance.encrypt32 = createUintToUint8ArrayFunction(32);

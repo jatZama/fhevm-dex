@@ -151,4 +151,3 @@ contract EncryptedERC20 is Reencrypt, Ownable2Step {
         emit Transfer(from, to);
     }
 }
-
