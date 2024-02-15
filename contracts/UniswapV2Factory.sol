@@ -13,6 +13,7 @@ contract UniswapV2Factory {
         return allPairs.length;
     }
 
+    // tokenA and tokenB should be EncryptedERC20_32 contracts
     function createPair(address tokenA, address tokenB) external returns (address pair) {
         require(tokenA != tokenB, "UniswapV2: IDENTICAL_ADDRESSES");
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
@@ -26,4 +27,5 @@ contract UniswapV2Factory {
         allPairs.push(pair);
         emit PairCreated(token0, token1, pair, allPairs.length);
     }
+
 }

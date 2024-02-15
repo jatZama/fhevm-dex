@@ -11,7 +11,7 @@ contract EncryptedERC20 is Reencrypt, Ownable2Step {
     event Approval(address indexed owner, address indexed spender);
     event Mint(address indexed to, uint32 amount);
 
-    uint32 private _totalSupply;
+    uint32 internal _totalSupply;
     string private _name;
     string private _symbol;
     uint8 public constant decimals = 0;
@@ -73,6 +73,11 @@ contract EncryptedERC20 is Reencrypt, Ownable2Step {
             return TFHE.reencrypt(balances[wallet], publicKey, 0);
         }
         return TFHE.reencrypt(TFHE.asEuint32(0), publicKey, 0);
+    }
+
+    // Returns the balance of the caller encrypted under the provided public key.
+    function balanceOfMe() public view returns (euint32) {
+        return balances[msg.sender];
     }
 
     // Sets the `encryptedAmount` as the allowance of `spender` over the caller's tokens.
@@ -146,3 +151,4 @@ contract EncryptedERC20 is Reencrypt, Ownable2Step {
         emit Transfer(from, to);
     }
 }
+
