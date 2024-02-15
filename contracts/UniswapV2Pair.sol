@@ -5,6 +5,7 @@ pragma solidity ^0.8.20;
 import "./EncryptedERC20.sol";
 
 contract UniswapV2Pair is EncryptedERC20 {
+    euint32 private ZERO = TFHE.asEuint32(0);
     uint256 public constant MIN_DELAY_SETTLEMENT = 2;
 
     uint256 internal currentTradingEpoch;
@@ -90,7 +91,7 @@ contract UniswapV2Pair is EncryptedERC20 {
         bytes calldata encryptedAmount1,
         address to,
         uint256 deadline
-    ) external ensure(deadline) returns (uint liquidity) {
+    ) external ensure(deadline) returns (euint32 liquidity) {
         euint32 balance0Before = token0.balanceOfMe();
         euint32 balance1Before = token1.balanceOfMe();
         euint32 amount0 = TFHE.asEuint32(encryptedAmount0);
@@ -109,20 +110,20 @@ contract UniswapV2Pair is EncryptedERC20 {
             firstBlockPerEpoch[currentTradingEpoch] = block.number;
         }
 
-        reserve0PendingAdd += amount0;
-        reserve1PendingAdd += amount1;
+        reserve0PendingAdd = reserve0PendingAdd + amount0;
+        reserve1PendingAdd = reserve1PendingAdd + amount1;
 
         if (totalSupply() == 0) {
             // this condition is equivalent to currentTradingEpoch==0 (see batchSettlement logic)
             liquidity = TFHE.shr(amount0, 1) + TFHE.shr(amount1, 1);
         } else {
-            euint64 liquidity0 = TFHE.div(TFHE.mul(TFHE.asEuint64(amount0), uint64(_totalSupply)), uint64(_reserve0)); // to avoid overflows
-            euint64 liquidity1 = TFHE.div(TFHE.mul(TFHE.asEuint64(amount1), uint64(_totalSupply)), uint64(_reserve1)); // to avoid overflows
+            euint64 liquidity0 = TFHE.div(TFHE.mul(TFHE.asEuint64(amount0), uint64(_totalSupply)), uint64(reserve0)); // to avoid overflows
+            euint64 liquidity1 = TFHE.div(TFHE.mul(TFHE.asEuint64(amount1), uint64(_totalSupply)), uint64(reserve1)); // to avoid overflows
             liquidity = TFHE.asEuint32(TFHE.min(liquidity0, liquidity1)); // check this always fit in a euint32 from the logic of the contract
         }
 
-        pendingMints[currentTradingEpoch][to] += liquidity;
-        pendingTotalMints[currentTradingEpoch] += liquidity;
+        pendingMints[currentTradingEpoch][to] = pendingMints[currentTradingEpoch][to] + liquidity;
+        pendingTotalMints[currentTradingEpoch] = pendingTotalMints[currentTradingEpoch] + liquidity;
     }
 
     // **** REMOVE LIQUIDITY ****
@@ -131,12 +132,12 @@ contract UniswapV2Pair is EncryptedERC20 {
         address to,
         uint deadline
     ) public ensure(deadline) returns (uint amountA, uint amountB) {
-        euint32 liquidityBefore = balanceOfMe(address(this));
+        euint32 liquidityBefore = balanceOfMe();
         transferFrom(msg.sender, address(this), encryptedLiquidity);
-        euint32 liquidityAfter = balanceOfMe(address(this));
+        euint32 liquidityAfter = balanceOfMe();
         euint32 burntLiquidity = liquidityAfter - liquidityBefore;
-        pendingBurns[currentTradingEpoch][to] += burntLiquidity;
-        pendingTotalBurns[currentTradingEpoch] += burntLiquidity;
+        pendingBurns[currentTradingEpoch][to] = pendingBurns[currentTradingEpoch][to] + burntLiquidity;
+        pendingTotalBurns[currentTradingEpoch] = pendingTotalBurns[currentTradingEpoch] + burntLiquidity;
     }
 
     // **** SWAP **** // typically either AmountAIn or AmountBIn is null
@@ -158,16 +159,16 @@ contract UniswapV2Pair is EncryptedERC20 {
         euint32 balance1After = token1.balanceOfMe();
         euint32 sent0 = balance0After - balance0Before;
         euint32 sent1 = balance1After - balance1Before;
-        pendingToken0In[currentTradingEpoch][msg.sender] += sent0;
-        pendingTotalToken0In[currentTradingEpoch] += sent0;
-        pendingToken1In[currentTradingEpoch][msg.sender] += sent1;
-        pendingTotalToken1In[currentTradingEpoch] += sent1;
+        pendingToken0In[currentTradingEpoch][msg.sender] = pendingToken0In[currentTradingEpoch][msg.sender] + sent0;
+        pendingTotalToken0In[currentTradingEpoch] = pendingTotalToken0In[currentTradingEpoch] + sent0;
+        pendingToken1In[currentTradingEpoch][msg.sender] = pendingToken1In[currentTradingEpoch][msg.sender] + sent1;
+        pendingTotalToken1In[currentTradingEpoch] = pendingTotalToken1In[currentTradingEpoch] + sent1;
     }
 
     function claimMint(uint256 tradingEpoch, address user) external {
         require(tradingEpoch < currentTradingEpoch, "tradingEpoch is not settled yet");
         transfer(user, pendingMints[tradingEpoch][user]);
-        pendingMints[tradingEpoch][user] = 0;
+        pendingMints[tradingEpoch][user] = ZERO;
     }
 
     function claimBurn(uint256 tradingEpoch, address user) external {
@@ -185,7 +186,7 @@ contract UniswapV2Pair is EncryptedERC20 {
         ); // check this always fit in a euint32
         token0.transfer(user, token0Claimable);
         token1.transfer(user, token1Claimable);
-        pendingBurns[tradingEpoch][user] = 0;
+        pendingBurns[tradingEpoch][user] = ZERO;
     }
 
     function claimSwap(uint256 tradingEpoch, address user) external {
@@ -214,8 +215,8 @@ contract UniswapV2Pair is EncryptedERC20 {
             token1.transfer(user, amount1Out);
         }
 
-        pendingToken0In[tradingEpoch][user] = 0;
-        pendingToken1In[tradingEpoch][user] = 0;
+        pendingToken0In[tradingEpoch][user] = ZERO;
+        pendingToken1In[tradingEpoch][user] = ZERO;
     }
 
     function batchSettlement() external {
@@ -229,8 +230,8 @@ contract UniswapV2Pair is EncryptedERC20 {
         uint32 reserve1PendingAddDec = TFHE.decrypt(reserve1PendingAdd);
         reserve0 += reserve0PendingAddDec;
         reserve1 += reserve1PendingAddDec;
-        reserve0PendingAdd = 0;
-        reserve1PendingAdd = 0;
+        reserve0PendingAdd = ZERO;
+        reserve1PendingAdd = ZERO;
 
         // Liquidity Mints
         uint32 _mintedTotal = TFHE.decrypt(pendingTotalMints[currentTradingEpoch]);
@@ -247,21 +248,23 @@ contract UniswapV2Pair is EncryptedERC20 {
         uint32 amount1In = TFHE.decrypt(pendingTotalToken1In[currentTradingEpoch]);
         decryptedTotalToken0In[currentTradingEpoch] = amount0In;
         decryptedTotalToken1In[currentTradingEpoch] = amount1In;
-        bool priceToken1Increasing = (uint64(decryptedTotalToken0In) * uint64(reserve1) >
-            uint64(decryptedTotalToken1In) * uint64(reserve0));
+        bool priceToken1Increasing = (uint64(amount0In) * uint64(reserve1) >
+            uint64(amount1In) * uint64(reserve0));
+        uint32 amount0Out;
+        uint32 amount1Out;
         if (priceToken1Increasing) {
             // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0In-amount0Out) to get amount1out_remaining according to AMM formula
-            uint32 amount0Out = uint32((uint64(amount1In) * uint64(reserve0)) / uint64(reserve1));
-            uint32 amount1Out = amount1In +
+            amount0Out = uint32((uint64(amount1In) * uint64(reserve0)) / uint64(reserve1));
+            amount1Out = amount1In +
                 reserve1 -
-                ((uint64(reserve1) * uint64(reserve0)) / (uint64(reserve0) + uint64(amount0In) - uint64(amount0Out)));
+                uint32((uint64(reserve1) * uint64(reserve0)) / (uint64(reserve0) + uint64(amount0In) - uint64(amount0Out)));
             amount1Out = uint32((99 * uint64(amount1Out)) / 100); // 1% fee for liquidity providers
         } else {
             // here we do the opposite, first sell token0 at current token0 price then swap remaining token1 according to AMM formula
-            uint32 amount1Out = uint32((uint64(amount0In) * uint64(reserve1)) / uint64(reserve0));
-            uint32 amount0Out = amount0In +
+            amount1Out = uint32((uint64(amount0In) * uint64(reserve1)) / uint64(reserve0));
+            amount0Out = amount0In +
                 reserve0 -
-                ((uint64(reserve0) * uint64(reserve1)) / (uint64(reserve1) + uint64(amount1In) - uint64(amount1Out)));
+                uint32((uint64(reserve0) * uint64(reserve1)) / (uint64(reserve1) + uint64(amount1In) - uint64(amount1Out)));
             amount0Out = uint32((99 * uint64(amount0Out)) / 100); // 1% fee for liquidity providers
         }
         totalToken0ClaimableSwap[currentTradingEpoch] = amount0Out;
@@ -274,8 +277,8 @@ contract UniswapV2Pair is EncryptedERC20 {
         decryptedTotalBurns[currentTradingEpoch] = _burnedTotal;
         uint32 amount0Claimable = (_burnedTotal * reserve0) / _totalSupply;
         uint32 amount1Claimable = (_burnedTotal * reserve1) / _totalSupply;
-        totalToken0Claimable[currentTradingEpoch] = amount0Claimable;
-        totalToken0Claimable[currentTradingEpoch] = amount1Claimable;
+        totalToken0ClaimableBurn[currentTradingEpoch] = amount0Claimable;
+        totalToken1ClaimableBurn[currentTradingEpoch] = amount1Claimable;
         reserve0 -= amount0Claimable;
         reserve1 -= amount1Claimable;
         _burn(_burnedTotal);
