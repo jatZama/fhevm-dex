@@ -4,11 +4,11 @@ pragma solidity ^0.8.20;
 
 import "./EncryptedERC20.sol";
 
-contract UniswapV2Pair is EncryptedERC20 {
+contract EncryptedDEXPair is EncryptedERC20 {
     euint32 private ZERO = TFHE.asEuint32(0);
     uint256 public constant MIN_DELAY_SETTLEMENT = 2;
 
-    uint256 internal currentTradingEpoch;
+    uint256 public currentTradingEpoch;
     mapping(uint256 tradingEpoch => uint256 firstOrderBlock) internal firstBlockPerEpoch; // set to current block number for any first order (mint, burn or swap) in an epoch
 
     mapping(uint256 tradingEpoch => mapping(address user => euint32 mintedLiquidity)) internal pendingMints;
@@ -42,15 +42,17 @@ contract UniswapV2Pair is EncryptedERC20 {
 
     uint256 private unlocked = 1;
 
+    event Burn(uint256 burnedAmount);
+
     modifier lock() {
-        require(unlocked == 1, "UniswapV2: LOCKED");
+        require(unlocked == 1, "EncryptedDEX: LOCKED");
         unlocked = 0;
         _;
         unlocked = 1;
     }
 
     modifier ensure(uint256 deadlineEpochNo) {
-        require(deadlineEpochNo >= currentTradingEpoch, "UniswapV2Router: EXPIRED");
+        require(deadlineEpochNo >= currentTradingEpoch, "EncryptedDEXRouter: EXPIRED");
         _;
     }
 
@@ -68,7 +70,7 @@ contract UniswapV2Pair is EncryptedERC20 {
     }
 
     function _mint(uint32 mintedAmount) internal {
-        balances[address(this)] = TFHE.add(balances[address(this)], mintedAmount);
+        // this is a partial mint, balances are updated later during the claim
         _totalSupply = _totalSupply + mintedAmount;
         emit Mint(address(this), mintedAmount);
     }
@@ -76,11 +78,12 @@ contract UniswapV2Pair is EncryptedERC20 {
     function _burn(uint32 burnedAmount) internal {
         balances[address(this)] = TFHE.sub(balances[address(this)], burnedAmount); // check underflow is impossible when used from the contract logic
         _totalSupply = _totalSupply - burnedAmount;
+        emit Burn(burnedAmount);
     }
 
     // called once by the factory at time of deployment
     function initialize(address _token0, address _token1) external {
-        require(msg.sender == factory, "UniswapV2: FORBIDDEN");
+        require(msg.sender == factory, "EncryptedDEX: FORBIDDEN");
         token0 = EncryptedERC20(_token0);
         token1 = EncryptedERC20(_token1);
     }
@@ -91,7 +94,7 @@ contract UniswapV2Pair is EncryptedERC20 {
         bytes calldata encryptedAmount1,
         address to,
         uint256 deadline
-    ) external ensure(deadline) returns (euint32 liquidity) {
+    ) external ensure(deadline) {
         euint32 balance0Before = token0.balanceOfMe();
         euint32 balance1Before = token1.balanceOfMe();
         euint32 amount0 = TFHE.asEuint32(encryptedAmount0);
@@ -102,10 +105,10 @@ contract UniswapV2Pair is EncryptedERC20 {
         euint32 balance1After = token1.balanceOfMe();
         euint32 sentAmount0 = balance0After - balance0Before;
         euint32 sentAmount1 = balance1After - balance1Before;
-        liquidity = mint(to, sentAmount0, sentAmount1);
+        mint(to, sentAmount0, sentAmount1);
     }
 
-    function mint(address to, euint32 amount0, euint32 amount1) internal returns (euint32 liquidity) {
+    function mint(address to, euint32 amount0, euint32 amount1) internal {
         if (firstBlockPerEpoch[currentTradingEpoch] == 0) {
             firstBlockPerEpoch[currentTradingEpoch] = block.number;
         }
@@ -113,6 +116,7 @@ contract UniswapV2Pair is EncryptedERC20 {
         reserve0PendingAdd = reserve0PendingAdd + amount0;
         reserve1PendingAdd = reserve1PendingAdd + amount1;
 
+        euint32 liquidity;
         if (totalSupply() == 0) {
             // this condition is equivalent to currentTradingEpoch==0 (see batchSettlement logic)
             liquidity = TFHE.shr(amount0, 1) + TFHE.shr(amount1, 1);
@@ -127,14 +131,10 @@ contract UniswapV2Pair is EncryptedERC20 {
     }
 
     // **** REMOVE LIQUIDITY ****
-    function removeLiquidity(
-        bytes calldata encryptedLiquidity,
-        address to,
-        uint deadline
-    ) public ensure(deadline) returns (uint amountA, uint amountB) {
-        euint32 liquidityBefore = balanceOfMe();
-        transferFrom(msg.sender, address(this), encryptedLiquidity);
-        euint32 liquidityAfter = balanceOfMe();
+    function removeLiquidity(bytes calldata encryptedLiquidity, address to, uint256 deadline) public ensure(deadline) {
+        euint32 liquidityBefore = balances[address(this)];
+        transfer(address(this), encryptedLiquidity);
+        euint32 liquidityAfter = balances[address(this)];
         euint32 burntLiquidity = liquidityAfter - liquidityBefore;
         pendingBurns[currentTradingEpoch][to] = pendingBurns[currentTradingEpoch][to] + burntLiquidity;
         pendingTotalBurns[currentTradingEpoch] = pendingTotalBurns[currentTradingEpoch] + burntLiquidity;
@@ -142,12 +142,10 @@ contract UniswapV2Pair is EncryptedERC20 {
 
     // **** SWAP **** // typically either AmountAIn or AmountBIn is null
     function swapTokens(
-        address tokenA,
-        address tokenB,
         bytes calldata encryptedAmount0In,
         bytes calldata encryptedAmount1In,
         address to,
-        uint deadline
+        uint256 deadline
     ) external ensure(deadline) {
         euint32 balance0Before = token0.balanceOfMe();
         euint32 balance1Before = token1.balanceOfMe();
@@ -159,15 +157,20 @@ contract UniswapV2Pair is EncryptedERC20 {
         euint32 balance1After = token1.balanceOfMe();
         euint32 sent0 = balance0After - balance0Before;
         euint32 sent1 = balance1After - balance1Before;
-        pendingToken0In[currentTradingEpoch][msg.sender] = pendingToken0In[currentTradingEpoch][msg.sender] + sent0;
+        pendingToken0In[currentTradingEpoch][to] = pendingToken0In[currentTradingEpoch][to] + sent0;
         pendingTotalToken0In[currentTradingEpoch] = pendingTotalToken0In[currentTradingEpoch] + sent0;
-        pendingToken1In[currentTradingEpoch][msg.sender] = pendingToken1In[currentTradingEpoch][msg.sender] + sent1;
+        pendingToken1In[currentTradingEpoch][to] = pendingToken1In[currentTradingEpoch][to] + sent1;
         pendingTotalToken1In[currentTradingEpoch] = pendingTotalToken1In[currentTradingEpoch] + sent1;
     }
 
     function claimMint(uint256 tradingEpoch, address user) external {
         require(tradingEpoch < currentTradingEpoch, "tradingEpoch is not settled yet");
-        transfer(user, pendingMints[tradingEpoch][user]);
+        if (tradingEpoch == 0) {
+            balances[user] = TFHE.sub(balances[user] + pendingMints[tradingEpoch][user], 100); // this could fail in the very theoretical case where several market makers would mint individually
+            //  less than 100 LP tokens but their sum is above 100. NOT a vulnerability, as long as the first market makers are aware that the avarage sent amounts during first tradingEpoch must be above 100.
+        } else {
+            balances[user] = balances[user] + pendingMints[tradingEpoch][user];
+        }
         pendingMints[tradingEpoch][user] = ZERO;
     }
 
@@ -219,53 +222,87 @@ contract UniswapV2Pair is EncryptedERC20 {
         pendingToken1In[tradingEpoch][user] = ZERO;
     }
 
+    function requestAllDecryptions()
+        internal
+        view
+        returns (
+            uint32 reserve0PendingAddDec,
+            uint32 reserve1PendingAddDec,
+            uint32 mintedTotal,
+            uint32 amount0In,
+            uint32 amount1In,
+            uint32 burnedTotal
+        )
+    {
+        reserve0PendingAddDec = TFHE.decrypt(reserve0PendingAdd);
+        reserve1PendingAddDec = TFHE.decrypt(reserve1PendingAdd);
+        mintedTotal = TFHE.decrypt(pendingTotalMints[currentTradingEpoch]);
+        amount0In = TFHE.decrypt(pendingTotalToken0In[currentTradingEpoch]);
+        amount1In = TFHE.decrypt(pendingTotalToken1In[currentTradingEpoch]);
+        burnedTotal = TFHE.decrypt(pendingTotalBurns[currentTradingEpoch]);
+    }
+
     function batchSettlement() external {
         require(
-            firstBlockPerEpoch[currentTradingEpoch] - block.number >= MIN_DELAY_SETTLEMENT,
+            block.number - firstBlockPerEpoch[currentTradingEpoch] >= MIN_DELAY_SETTLEMENT,
             "First order of current epoch is more recent than minimum delay"
         );
+        // get all needed decryptions in a single call (this pattern is helpful to later adapt the design when TFHE.decrypt wil become asynchronous)
+        (
+            uint32 reserve0PendingAddDec,
+            uint32 reserve1PendingAddDec,
+            uint32 mintedTotal,
+            uint32 amount0In,
+            uint32 amount1In,
+            uint32 burnedTotal
+        ) = requestAllDecryptions();
 
         // update reserves after new liquidity deposits
-        uint32 reserve0PendingAddDec = TFHE.decrypt(reserve0PendingAdd);
-        uint32 reserve1PendingAddDec = TFHE.decrypt(reserve1PendingAdd);
+
         reserve0 += reserve0PendingAddDec;
         reserve1 += reserve1PendingAddDec;
         reserve0PendingAdd = ZERO;
         reserve1PendingAdd = ZERO;
 
         // Liquidity Mints
-        uint32 _mintedTotal = TFHE.decrypt(pendingTotalMints[currentTradingEpoch]);
-        _mint(_mintedTotal);
-        if (currentTradingEpoch == 0) {
-            require(_mintedTotal >= 100, "Initial minted liquidity should be greater than 100");
-            decryptedTotalMints[currentTradingEpoch] = _mintedTotal - 100; // this is to lock forever 100 liquidity tokens inside the pool, so totalSupply of liquidity would remain above 100 to avoid security issues
-        } else {
-            decryptedTotalMints[currentTradingEpoch] = _mintedTotal;
+        if (mintedTotal > 0) {
+            _mint(mintedTotal);
+            decryptedTotalMints[currentTradingEpoch] = mintedTotal;
         }
+        require(
+            currentTradingEpoch != 0 || mintedTotal >= 100,
+            "Initial minted liquidity amount should be greater than 100"
+        ); // this is to lock forever at least 100 liquidity tokens inside the pool, so totalSupply of liquidity
+        // would remain above 100 to avoid security issues,  for instance if a single market maker wants to burn the whole liquidity in a single transaction, making the pool unusable
 
         // Token Swaps
-        uint32 amount0In = TFHE.decrypt(pendingTotalToken0In[currentTradingEpoch]);
-        uint32 amount1In = TFHE.decrypt(pendingTotalToken1In[currentTradingEpoch]);
         decryptedTotalToken0In[currentTradingEpoch] = amount0In;
         decryptedTotalToken1In[currentTradingEpoch] = amount1In;
-        bool priceToken1Increasing = (uint64(amount0In) * uint64(reserve1) >
-            uint64(amount1In) * uint64(reserve0));
+        bool priceToken1Increasing = (uint64(amount0In) * uint64(reserve1) > uint64(amount1In) * uint64(reserve0));
         uint32 amount0Out;
         uint32 amount1Out;
         if (priceToken1Increasing) {
             // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0In-amount0Out) to get amount1out_remaining according to AMM formula
             amount0Out = uint32((uint64(amount1In) * uint64(reserve0)) / uint64(reserve1));
-            amount1Out = amount1In +
+            amount1Out =
+                amount1In +
                 reserve1 -
-                uint32((uint64(reserve1) * uint64(reserve0)) / (uint64(reserve0) + uint64(amount0In) - uint64(amount0Out)));
+                uint32(
+                    (uint64(reserve1) * uint64(reserve0)) / (uint64(reserve0) + uint64(amount0In) - uint64(amount0Out))
+                );
+            amount0Out = uint32((99 * uint64(amount0Out)) / 100); // 1% fee for liquidity providers
             amount1Out = uint32((99 * uint64(amount1Out)) / 100); // 1% fee for liquidity providers
         } else {
             // here we do the opposite, first sell token0 at current token0 price then swap remaining token1 according to AMM formula
             amount1Out = uint32((uint64(amount0In) * uint64(reserve1)) / uint64(reserve0));
-            amount0Out = amount0In +
+            amount0Out =
+                amount0In +
                 reserve0 -
-                uint32((uint64(reserve0) * uint64(reserve1)) / (uint64(reserve1) + uint64(amount1In) - uint64(amount1Out)));
+                uint32(
+                    (uint64(reserve0) * uint64(reserve1)) / (uint64(reserve1) + uint64(amount1In) - uint64(amount1Out))
+                );
             amount0Out = uint32((99 * uint64(amount0Out)) / 100); // 1% fee for liquidity providers
+            amount1Out = uint32((99 * uint64(amount1Out)) / 100); // 1% fee for liquidity providers
         }
         totalToken0ClaimableSwap[currentTradingEpoch] = amount0Out;
         totalToken1ClaimableSwap[currentTradingEpoch] = amount1Out;
@@ -273,15 +310,16 @@ contract UniswapV2Pair is EncryptedERC20 {
         reserve1 = reserve1 + amount1In - amount1Out;
 
         // Liquidity Burns
-        uint32 _burnedTotal = TFHE.decrypt(pendingTotalBurns[currentTradingEpoch]);
-        decryptedTotalBurns[currentTradingEpoch] = _burnedTotal;
-        uint32 amount0Claimable = (_burnedTotal * reserve0) / _totalSupply;
-        uint32 amount1Claimable = (_burnedTotal * reserve1) / _totalSupply;
-        totalToken0ClaimableBurn[currentTradingEpoch] = amount0Claimable;
-        totalToken1ClaimableBurn[currentTradingEpoch] = amount1Claimable;
-        reserve0 -= amount0Claimable;
-        reserve1 -= amount1Claimable;
-        _burn(_burnedTotal);
+        if (burnedTotal > 0) {
+            decryptedTotalBurns[currentTradingEpoch] = burnedTotal;
+            uint32 amount0Claimable = uint32((uint64(burnedTotal) * uint64(reserve0)) / uint64(_totalSupply));
+            uint32 amount1Claimable = uint32((uint64(burnedTotal) * uint64(reserve1)) / uint64(_totalSupply));
+            totalToken0ClaimableBurn[currentTradingEpoch] = amount0Claimable;
+            totalToken1ClaimableBurn[currentTradingEpoch] = amount1Claimable;
+            reserve0 -= amount0Claimable;
+            reserve1 -= amount1Claimable;
+            _burn(burnedTotal);
+        }
 
         currentTradingEpoch++;
 
