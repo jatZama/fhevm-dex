@@ -203,7 +203,7 @@ describe("Private DEX", function () {
     await tx23.wait();
     console.log("Eve submitted a swap order at tradingEpoch ", await pair.currentTradingEpoch(), "\n");
 
-    const tx24 = await pair.batchSettlement();
+    const tx24 = await pair.batchSettlement({ gasLimit : 10_000_000 });
     await tx24.wait();
 
     console.log(
@@ -243,7 +243,7 @@ describe("Private DEX", function () {
     balance = await getPrivateBalanceERC20(pairAddress, "carol");
     console.log("Carol now owns a private balance of ", balance, " liquidity tokens \n");
 
-    const tx29 = await pair.batchSettlement();
+    const tx29 = await pair.batchSettlement({ gasLimit : 10_000_000 });
     await tx29.wait();
 
     console.log(

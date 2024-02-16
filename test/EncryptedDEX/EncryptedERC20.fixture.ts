@@ -25,6 +25,6 @@ export async function getPrivateBalanceERC20(erc20Address: string, userName: str
   const encryptedBalance = await erc20
     .connect(signers[userName])
     .balanceOf(signers[userName], token.publicKey, token.signature);
-  const balance = instances.alice.decrypt(erc20Address, encryptedBalance);
+  const balance = instances[userName].decrypt(erc20Address, encryptedBalance);
   return balance;
 }

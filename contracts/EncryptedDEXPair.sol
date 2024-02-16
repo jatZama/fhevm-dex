@@ -234,12 +234,12 @@ contract EncryptedDEXPair is EncryptedERC20 {
             uint32 burnedTotal
         )
     {
-        reserve0PendingAddDec = TFHE.decrypt(reserve0PendingAdd);
-        reserve1PendingAddDec = TFHE.decrypt(reserve1PendingAdd);
-        mintedTotal = TFHE.decrypt(pendingTotalMints[currentTradingEpoch]);
-        amount0In = TFHE.decrypt(pendingTotalToken0In[currentTradingEpoch]);
-        amount1In = TFHE.decrypt(pendingTotalToken1In[currentTradingEpoch]);
-        burnedTotal = TFHE.decrypt(pendingTotalBurns[currentTradingEpoch]);
+        if(TFHE.isInitialized(reserve0PendingAdd)) reserve0PendingAddDec = TFHE.decrypt(reserve0PendingAdd);
+        if(TFHE.isInitialized(reserve1PendingAdd)) reserve1PendingAddDec = TFHE.decrypt(reserve1PendingAdd);
+        if(TFHE.isInitialized(pendingTotalMints[currentTradingEpoch])) mintedTotal = TFHE.decrypt(pendingTotalMints[currentTradingEpoch]);
+        if(TFHE.isInitialized(pendingTotalToken0In[currentTradingEpoch])) amount0In = TFHE.decrypt(pendingTotalToken0In[currentTradingEpoch]);
+        if(TFHE.isInitialized(pendingTotalToken1In[currentTradingEpoch])) amount1In = TFHE.decrypt(pendingTotalToken1In[currentTradingEpoch]);
+        if(TFHE.isInitialized(pendingTotalBurns[currentTradingEpoch])) burnedTotal = TFHE.decrypt(pendingTotalBurns[currentTradingEpoch]);
     }
 
     function batchSettlement() external {
@@ -258,51 +258,48 @@ contract EncryptedDEXPair is EncryptedERC20 {
         ) = requestAllDecryptions();
 
         // update reserves after new liquidity deposits
-
         reserve0 += reserve0PendingAddDec;
         reserve1 += reserve1PendingAddDec;
         reserve0PendingAdd = ZERO;
         reserve1PendingAdd = ZERO;
 
         // Liquidity Mints
-        if (mintedTotal > 0) {
-            _mint(mintedTotal);
-            decryptedTotalMints[currentTradingEpoch] = mintedTotal;
-        }
         require(
             currentTradingEpoch != 0 || mintedTotal >= 100,
             "Initial minted liquidity amount should be greater than 100"
         ); // this is to lock forever at least 100 liquidity tokens inside the pool, so totalSupply of liquidity
         // would remain above 100 to avoid security issues,  for instance if a single market maker wants to burn the whole liquidity in a single transaction, making the pool unusable
+        if (mintedTotal > 0) {
+            _mint(mintedTotal);
+            decryptedTotalMints[currentTradingEpoch] = mintedTotal;
+        }
 
         // Token Swaps
         decryptedTotalToken0In[currentTradingEpoch] = amount0In;
         decryptedTotalToken1In[currentTradingEpoch] = amount1In;
+        uint32 amount0InMinusFee = uint32((99 * uint64(amount0In)) / 100); // 1% fee for liquidity providers
+        uint32 amount1InMinusFee = uint32((99 * uint64(amount1In)) / 100); // 1% fee for liquidity providers
         bool priceToken1Increasing = (uint64(amount0In) * uint64(reserve1) > uint64(amount1In) * uint64(reserve0));
         uint32 amount0Out;
         uint32 amount1Out;
         if (priceToken1Increasing) {
             // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0In-amount0Out) to get amount1out_remaining according to AMM formula
-            amount0Out = uint32((uint64(amount1In) * uint64(reserve0)) / uint64(reserve1));
+            amount0Out = uint32((uint64(amount1InMinusFee) * uint64(reserve0)) / uint64(reserve1));
             amount1Out =
-                amount1In +
+                amount1InMinusFee +
                 reserve1 -
                 uint32(
-                    (uint64(reserve1) * uint64(reserve0)) / (uint64(reserve0) + uint64(amount0In) - uint64(amount0Out))
+                    (uint64(reserve1) * uint64(reserve0)) / (uint64(reserve0) + uint64(amount0InMinusFee) - uint64(amount0Out))
                 );
-            amount0Out = uint32((99 * uint64(amount0Out)) / 100); // 1% fee for liquidity providers
-            amount1Out = uint32((99 * uint64(amount1Out)) / 100); // 1% fee for liquidity providers
         } else {
             // here we do the opposite, first sell token0 at current token0 price then swap remaining token1 according to AMM formula
-            amount1Out = uint32((uint64(amount0In) * uint64(reserve1)) / uint64(reserve0));
+            amount1Out = uint32((uint64(amount0InMinusFee) * uint64(reserve1)) / uint64(reserve0));
             amount0Out =
-                amount0In +
+                amount0InMinusFee +
                 reserve0 -
                 uint32(
-                    (uint64(reserve0) * uint64(reserve1)) / (uint64(reserve1) + uint64(amount1In) - uint64(amount1Out))
+                    (uint64(reserve0) * uint64(reserve1)) / (uint64(reserve1) + uint64(amount1InMinusFee) - uint64(amount1Out))
                 );
-            amount0Out = uint32((99 * uint64(amount0Out)) / 100); // 1% fee for liquidity providers
-            amount1Out = uint32((99 * uint64(amount1Out)) / 100); // 1% fee for liquidity providers
         }
         totalToken0ClaimableSwap[currentTradingEpoch] = amount0Out;
         totalToken1ClaimableSwap[currentTradingEpoch] = amount1Out;
