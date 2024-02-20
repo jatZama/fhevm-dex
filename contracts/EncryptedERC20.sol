@@ -75,7 +75,7 @@ contract EncryptedERC20 is Reencrypt, Ownable2Step {
         return TFHE.reencrypt(TFHE.asEuint32(0), publicKey, 0);
     }
 
-    // Returns the balance of the caller encrypted under the provided public key.
+    // Returns the encrypted balance of the caller.
     function balanceOfMe() public view returns (euint32) {
         return balances[msg.sender];
     }
