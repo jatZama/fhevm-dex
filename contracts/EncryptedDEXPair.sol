@@ -5,6 +5,14 @@ pragma solidity ^0.8.20;
 import "./EncryptedERC20.sol";
 
 contract EncryptedDEXPair is EncryptedERC20 {
+    struct DecryptionResults {
+        uint32 reserve0PendingAddDec;
+        uint32 reserve1PendingAddDec;
+        uint32 mintedTotal;
+        uint32 amount0In;
+        uint32 amount1In;
+        uint32 burnedTotal;
+    }
     euint32 private ZERO = TFHE.asEuint32(0);
     uint256 public constant MIN_DELAY_SETTLEMENT = 2;
 
@@ -109,8 +117,9 @@ contract EncryptedDEXPair is EncryptedERC20 {
     }
 
     function mint(address to, euint32 amount0, euint32 amount1) internal {
-        if (firstBlockPerEpoch[currentTradingEpoch] == 0) {
-            firstBlockPerEpoch[currentTradingEpoch] = block.number;
+        uint256 currentEpoch = currentTradingEpoch;
+        if (firstBlockPerEpoch[currentEpoch] == 0) {
+            firstBlockPerEpoch[currentEpoch] = block.number;
         }
 
         reserve0PendingAdd = reserve0PendingAdd + amount0;
@@ -118,7 +127,7 @@ contract EncryptedDEXPair is EncryptedERC20 {
 
         euint32 liquidity;
         if (totalSupply() == 0) {
-            // this condition is equivalent to currentTradingEpoch==0 (see batchSettlement logic)
+            // this condition is equivalent to currentEpoch==0 (see batchSettlement logic)
             liquidity = TFHE.shr(amount0, 1) + TFHE.shr(amount1, 1);
         } else {
             euint64 liquidity0 = TFHE.div(TFHE.mul(TFHE.asEuint64(amount0), uint64(_totalSupply)), uint64(reserve0)); // to avoid overflows
@@ -126,18 +135,22 @@ contract EncryptedDEXPair is EncryptedERC20 {
             liquidity = TFHE.asEuint32(TFHE.min(liquidity0, liquidity1)); // check this always fit in a euint32 from the logic of the contract
         }
 
-        pendingMints[currentTradingEpoch][to] = pendingMints[currentTradingEpoch][to] + liquidity;
-        pendingTotalMints[currentTradingEpoch] = pendingTotalMints[currentTradingEpoch] + liquidity;
+        pendingMints[currentEpoch][to] = pendingMints[currentEpoch][to] + liquidity;
+        pendingTotalMints[currentEpoch] = pendingTotalMints[currentEpoch] + liquidity;
     }
 
     // **** REMOVE LIQUIDITY ****
     function removeLiquidity(bytes calldata encryptedLiquidity, address to, uint256 deadline) public ensure(deadline) {
+        uint256 currentEpoch = currentTradingEpoch;
+        if (firstBlockPerEpoch[currentEpoch] == 0) {
+            firstBlockPerEpoch[currentEpoch] = block.number;
+        }
         euint32 liquidityBefore = balances[address(this)];
         transfer(address(this), encryptedLiquidity);
         euint32 liquidityAfter = balances[address(this)];
         euint32 burntLiquidity = liquidityAfter - liquidityBefore;
-        pendingBurns[currentTradingEpoch][to] = pendingBurns[currentTradingEpoch][to] + burntLiquidity;
-        pendingTotalBurns[currentTradingEpoch] = pendingTotalBurns[currentTradingEpoch] + burntLiquidity;
+        pendingBurns[currentEpoch][to] = pendingBurns[currentEpoch][to] + burntLiquidity;
+        pendingTotalBurns[currentEpoch] = pendingTotalBurns[currentEpoch] + burntLiquidity;
     }
 
     // **** SWAP **** // typically either AmountAIn or AmountBIn is null
@@ -147,6 +160,10 @@ contract EncryptedDEXPair is EncryptedERC20 {
         address to,
         uint256 deadline
     ) external ensure(deadline) {
+        uint256 currentEpoch = currentTradingEpoch;
+        if (firstBlockPerEpoch[currentEpoch] == 0) {
+            firstBlockPerEpoch[currentEpoch] = block.number;
+        }
         euint32 balance0Before = token0.balanceOfMe();
         euint32 balance1Before = token1.balanceOfMe();
         euint32 amount0In = TFHE.asEuint32(encryptedAmount0In); // even if amount is null, do a transfer to obfuscate trade direction
@@ -157,10 +174,10 @@ contract EncryptedDEXPair is EncryptedERC20 {
         euint32 balance1After = token1.balanceOfMe();
         euint32 sent0 = balance0After - balance0Before;
         euint32 sent1 = balance1After - balance1Before;
-        pendingToken0In[currentTradingEpoch][to] = pendingToken0In[currentTradingEpoch][to] + sent0;
-        pendingTotalToken0In[currentTradingEpoch] = pendingTotalToken0In[currentTradingEpoch] + sent0;
-        pendingToken1In[currentTradingEpoch][to] = pendingToken1In[currentTradingEpoch][to] + sent1;
-        pendingTotalToken1In[currentTradingEpoch] = pendingTotalToken1In[currentTradingEpoch] + sent1;
+        pendingToken0In[currentEpoch][to] = pendingToken0In[currentEpoch][to] + sent0;
+        pendingTotalToken0In[currentEpoch] = pendingTotalToken0In[currentEpoch] + sent0;
+        pendingToken1In[currentEpoch][to] = pendingToken1In[currentEpoch][to] + sent1;
+        pendingTotalToken1In[currentEpoch] = pendingTotalToken1In[currentEpoch] + sent1;
     }
 
     function claimMint(uint256 tradingEpoch, address user) external {
@@ -225,15 +242,14 @@ contract EncryptedDEXPair is EncryptedERC20 {
     function requestAllDecryptions()
         internal
         view
-        returns (
-            uint32 reserve0PendingAddDec,
-            uint32 reserve1PendingAddDec,
-            uint32 mintedTotal,
-            uint32 amount0In,
-            uint32 amount1In,
-            uint32 burnedTotal
-        )
+        returns (DecryptionResults memory)
     {
+        uint32 reserve0PendingAddDec;
+        uint32 reserve1PendingAddDec;
+        uint32 mintedTotal;
+        uint32 amount0In;
+        uint32 amount1In;
+        uint32 burnedTotal;
         if (TFHE.isInitialized(reserve0PendingAdd)) reserve0PendingAddDec = TFHE.decrypt(reserve0PendingAdd);
         if (TFHE.isInitialized(reserve1PendingAdd)) reserve1PendingAddDec = TFHE.decrypt(reserve1PendingAdd);
         if (TFHE.isInitialized(pendingTotalMints[currentTradingEpoch]))
@@ -244,46 +260,44 @@ contract EncryptedDEXPair is EncryptedERC20 {
             amount1In = TFHE.decrypt(pendingTotalToken1In[currentTradingEpoch]);
         if (TFHE.isInitialized(pendingTotalBurns[currentTradingEpoch]))
             burnedTotal = TFHE.decrypt(pendingTotalBurns[currentTradingEpoch]);
+        return DecryptionResults(reserve0PendingAddDec, reserve1PendingAddDec, mintedTotal, amount0In, amount1In, burnedTotal);
     }
 
     function batchSettlement() external {
+        uint256 tradingEpoch = currentTradingEpoch;
+        require(firstBlockPerEpoch[tradingEpoch] != 0,
+            "Current trading epoch did not start yet"
+        );
         require(
-            block.number - firstBlockPerEpoch[currentTradingEpoch] >= MIN_DELAY_SETTLEMENT,
+            block.number - firstBlockPerEpoch[tradingEpoch] >= MIN_DELAY_SETTLEMENT,
             "First order of current epoch is more recent than minimum delay"
         );
         // get all needed decryptions in a single call (this pattern is helpful to later adapt the design when TFHE.decrypt wil become asynchronous)
-        (
-            uint32 reserve0PendingAddDec,
-            uint32 reserve1PendingAddDec,
-            uint32 mintedTotal,
-            uint32 amount0In,
-            uint32 amount1In,
-            uint32 burnedTotal
-        ) = requestAllDecryptions();
+        DecryptionResults memory decResults = requestAllDecryptions();
 
         // update reserves after new liquidity deposits
-        reserve0 += reserve0PendingAddDec;
-        reserve1 += reserve1PendingAddDec;
+        reserve0 += decResults.reserve0PendingAddDec;
+        reserve1 += decResults.reserve1PendingAddDec;
         reserve0PendingAdd = ZERO;
         reserve1PendingAdd = ZERO;
 
         // Liquidity Mints
         require(
-            currentTradingEpoch != 0 || mintedTotal >= 100,
+            tradingEpoch != 0 || decResults.mintedTotal >= 100,
             "Initial minted liquidity amount should be greater than 100"
         ); // this is to lock forever at least 100 liquidity tokens inside the pool, so totalSupply of liquidity
         // would remain above 100 to avoid security issues,  for instance if a single market maker wants to burn the whole liquidity in a single transaction, making the pool unusable
-        if (mintedTotal > 0) {
-            _mint(mintedTotal);
-            decryptedTotalMints[currentTradingEpoch] = mintedTotal;
+        if (decResults.mintedTotal > 0) {
+            _mint(decResults.mintedTotal);
+            decryptedTotalMints[tradingEpoch] = decResults.mintedTotal;
         }
 
         // Token Swaps
-        decryptedTotalToken0In[currentTradingEpoch] = amount0In;
-        decryptedTotalToken1In[currentTradingEpoch] = amount1In;
-        uint32 amount0InMinusFee = uint32((99 * uint64(amount0In)) / 100); // 1% fee for liquidity providers
-        uint32 amount1InMinusFee = uint32((99 * uint64(amount1In)) / 100); // 1% fee for liquidity providers
-        bool priceToken1Increasing = (uint64(amount0In) * uint64(reserve1) > uint64(amount1In) * uint64(reserve0));
+        decryptedTotalToken0In[tradingEpoch] = decResults.amount0In;
+        decryptedTotalToken1In[tradingEpoch] = decResults.amount1In;
+        uint32 amount0InMinusFee = uint32((99 * uint64(decResults.amount0In)) / 100); // 1% fee for liquidity providers
+        uint32 amount1InMinusFee = uint32((99 * uint64(decResults.amount1In)) / 100); // 1% fee for liquidity providers
+        bool priceToken1Increasing = (uint64(decResults.amount0In) * uint64(reserve1) > uint64(decResults.amount1In) * uint64(reserve0));
         uint32 amount0Out;
         uint32 amount1Out;
         if (priceToken1Increasing) {
@@ -307,21 +321,21 @@ contract EncryptedDEXPair is EncryptedERC20 {
                         (uint64(reserve1) + uint64(amount1InMinusFee) - uint64(amount1Out))
                 );
         }
-        totalToken0ClaimableSwap[currentTradingEpoch] = amount0Out;
-        totalToken1ClaimableSwap[currentTradingEpoch] = amount1Out;
-        reserve0 = reserve0 + amount0In - amount0Out;
-        reserve1 = reserve1 + amount1In - amount1Out;
+        totalToken0ClaimableSwap[tradingEpoch] = amount0Out;
+        totalToken1ClaimableSwap[tradingEpoch] = amount1Out;
+        reserve0 = reserve0 + decResults.amount0In - amount0Out;
+        reserve1 = reserve1 + decResults.amount1In - amount1Out;
 
         // Liquidity Burns
-        if (burnedTotal > 0) {
-            decryptedTotalBurns[currentTradingEpoch] = burnedTotal;
-            uint32 amount0Claimable = uint32((uint64(burnedTotal) * uint64(reserve0)) / uint64(_totalSupply));
-            uint32 amount1Claimable = uint32((uint64(burnedTotal) * uint64(reserve1)) / uint64(_totalSupply));
-            totalToken0ClaimableBurn[currentTradingEpoch] = amount0Claimable;
-            totalToken1ClaimableBurn[currentTradingEpoch] = amount1Claimable;
+        if (decResults.burnedTotal > 0) {
+            decryptedTotalBurns[tradingEpoch] = decResults.burnedTotal;
+            uint32 amount0Claimable = uint32((uint64(decResults.burnedTotal) * uint64(reserve0)) / uint64(_totalSupply));
+            uint32 amount1Claimable = uint32((uint64(decResults.burnedTotal) * uint64(reserve1)) / uint64(_totalSupply));
+            totalToken0ClaimableBurn[tradingEpoch] = amount0Claimable;
+            totalToken1ClaimableBurn[tradingEpoch] = amount1Claimable;
             reserve0 -= amount0Claimable;
             reserve1 -= amount1Claimable;
-            _burn(burnedTotal);
+            _burn(decResults.burnedTotal);
         }
 
         currentTradingEpoch++;
