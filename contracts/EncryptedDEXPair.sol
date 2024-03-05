@@ -122,20 +122,25 @@ contract EncryptedDEXPair is EncryptedERC20 {
         if (firstBlockPerEpoch[currentEpoch] == 0) {
             firstBlockPerEpoch[currentEpoch] = block.number;
         }
-
         reserve0PendingAdd = reserve0PendingAdd + amount0;
         reserve1PendingAdd = reserve1PendingAdd + amount1;
-
         euint64 liquidity;
         if (totalSupply() == 0) {
             // this condition is equivalent to currentEpoch==0 (see batchSettlement logic)
             liquidity = TFHE.shr(amount0, 1) + TFHE.shr(amount1, 1);
+            ebool isBelowMinimum = TFHE.lt(liquidity, MINIMIMUM_LIQUIDITY);
+            liquidity = TFHE.cmux(isBelowMinimum, ZERO, liquidity);
+            euint64 amount0Back = TFHE.cmux(isBelowMinimum, amount0, ZERO);
+            euint64 amount1Back = TFHE.cmux(isBelowMinimum, amount1, ZERO);
+            token0.transfer(msg.sender, amount0Back); // refund first liquidity if it is below the minimal amount
+            token1.transfer(msg.sender, amount1Back); // refund first liquidity if it is below the minimal amount
+            reserve0PendingAdd = reserve0PendingAdd - amount0Back;
+            reserve1PendingAdd = reserve1PendingAdd - amount1Back;
         } else {
             euint64 liquidity0 = TFHE.div(TFHE.mul(TFHE.shr(amount0, 32), _totalSupply >> 32), reserve0 >> 32);
             euint64 liquidity1 = TFHE.div(TFHE.mul(TFHE.shr(amount1, 32), _totalSupply >> 32), reserve1 >> 32);
             liquidity = TFHE.shl(TFHE.min(liquidity0, liquidity1), 32);
         }
-
         pendingMints[currentEpoch][to] = pendingMints[currentEpoch][to] + liquidity;
         pendingTotalMints[currentEpoch] = pendingTotalMints[currentEpoch] + liquidity;
     }
