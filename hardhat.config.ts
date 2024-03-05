@@ -152,7 +152,7 @@ const config: HardhatUserConfig = {
     tests: "./test",
   },
   solidity: {
-    version: "0.8.24",
+    version: "0.8.22",
     settings: {
       metadata: {
         // Not including the metadata hash
@@ -163,7 +163,7 @@ const config: HardhatUserConfig = {
       // https://hardhat.org/hardhat-network/#solidity-optimizer-support
       optimizer: {
         enabled: true,
-        runs: 0,
+        runs: 800,
       },
       evmVersion: "shanghai",
     },
