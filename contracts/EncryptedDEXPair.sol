@@ -18,7 +18,8 @@ contract EncryptedDEXPair is EncryptedERC20 {
     uint256 public constant MIN_DELAY_SETTLEMENT = 2;
 
     uint256 public currentTradingEpoch;
-    mapping(uint256 tradingEpoch => uint256 firstOrderBlock) internal firstBlockPerEpoch; // set to current block number for any first order (mint, burn or swap) in an epoch
+    mapping(uint256 tradingEpoch => uint256 firstOrderBlock) internal firstBlockPerEpoch;
+    // set to current block number for any first order (mint, burn or swap) in an epoch
 
     mapping(uint256 tradingEpoch => mapping(address user => euint32 mintedLiquidity)) internal pendingMints;
     mapping(uint256 tradingEpoch => euint32 mintedTotalLiquidity) internal pendingTotalMints;
@@ -292,8 +293,9 @@ contract EncryptedDEXPair is EncryptedERC20 {
         require(
             tradingEpoch != 0 || decResults.mintedTotal >= MINIMIMUM_LIQUIDITY,
             "Initial minted liquidity amount should be greater than MINIMIMUM_LIQUIDITY"
-        ); // this is to lock forever at least MINIMIMUM_LIQUIDITY liquidity tokens inside the pool, so totalSupply of liquidity
-        // would remain above MINIMIMUM_LIQUIDITY to avoid security issues, for e.g. if a market maker burns the entire liquidity in a single transaction, making the pool unusable
+        );
+        // this is to lock forever at least MINIMIMUM_LIQUIDITY liquidity tokens inside the pool, so totalSupply of liquidity would remain above
+        // MINIMIMUM_LIQUIDITY to avoid security issues, for e.g. if a market maker burns the entire liquidity in a single transaction, making the pool unusable
         if (decResults.mintedTotal > 0) {
             _mintPartial(decResults.mintedTotal);
             decryptedTotalMints[tradingEpoch] = decResults.mintedTotal;
@@ -309,8 +311,11 @@ contract EncryptedDEXPair is EncryptedERC20 {
         uint32 amount0Out;
         uint32 amount1Out;
         if (priceToken1Increasing) {
-            // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0In-amount0Out) to get amount1out_remaining according to AMM formula
+            // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0In-amount0Out)
+            // to get amount1out_remaining according to AMM formula
             amount0Out = uint32((uint64(amount1InMinusFee) * uint64(reserve0)) / uint64(reserve1));
+            // NOTE : reserve1 should never be 0 after first liquidity minting event -see assert at the end- if first batchSettlement
+            //  is called without minting, tx will fail anyways
             amount1Out =
                 amount1InMinusFee +
                 reserve1 -
@@ -321,6 +326,8 @@ contract EncryptedDEXPair is EncryptedERC20 {
         } else {
             // here we do the opposite, first sell token0 at current token0 price then swap remaining token1 according to AMM formula
             amount1Out = uint32((uint64(amount0InMinusFee) * uint64(reserve1)) / uint64(reserve0));
+            // NOTE : reserve0 should never be 0 after first liquidity minting event -see assert at the end- if first batchSettlement
+            // is called without minting, tx will fail anyways
             amount0Out =
                 amount0InMinusFee +
                 reserve0 -
@@ -352,6 +359,6 @@ contract EncryptedDEXPair is EncryptedERC20 {
 
         currentTradingEpoch++;
 
-        require(reserve0 > 0 && reserve1 > 0, "Reserves should stay positive");
+        assert(reserve0 > 0 && reserve1 > 0); // Reserves should stay positive
     }
 }
