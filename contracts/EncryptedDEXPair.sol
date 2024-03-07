@@ -159,7 +159,7 @@ contract EncryptedDEXPair is EncryptedERC20 {
         pendingTotalBurns[currentEpoch] = pendingTotalBurns[currentEpoch] + burntLiquidity;
     }
 
-    // **** SWAP **** // typically either AmountAIn or AmountBIn is null
+    // **** SWAP **** // typically either Amount0In or Amount1In is null
     function swapTokens(
         bytes calldata encryptedAmount0In,
         bytes calldata encryptedAmount1In,
