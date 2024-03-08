@@ -189,12 +189,16 @@ contract EncryptedDEXPair is EncryptedERC20 {
 
     function claimMint(uint256 tradingEpoch, address user) external {
         require(tradingEpoch < currentTradingEpoch, "tradingEpoch is not settled yet");
+        _mint(tradingEpoch, user);
+        pendingMints[tradingEpoch][user] = ZERO;
+    }
+
+    function _mint(uint256 tradingEpoch, address user) internal {
         if (tradingEpoch == 0) {
             balances[user] = TFHE.sub(balances[user] + pendingMints[tradingEpoch][user], MINIMIMUM_LIQUIDITY); // this could never underflow from the contract logic
         } else {
             balances[user] = balances[user] + pendingMints[tradingEpoch][user];
         }
-        pendingMints[tradingEpoch][user] = ZERO;
     }
 
     function claimBurn(uint256 tradingEpoch, address user) external {
