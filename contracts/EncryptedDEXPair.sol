@@ -315,8 +315,8 @@ contract EncryptedDEXPair is EncryptedERC20 {
         uint32 amount0Out;
         uint32 amount1Out;
         if (priceToken1Increasing) {
-            // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0In-amount0Out)
-            // to get amount1out_remaining according to AMM formula
+            // in this case, first sell all amount1In at current fixed token1 price to get amount0Out, then swap remaining (amount0InMinusFee-amount0Out)
+            // to get amount1Out_remaining according to AMM formula
             amount0Out = uint32((uint64(amount1InMinusFee) * uint64(reserve0)) / uint64(reserve1));
             // NOTE : reserve1 should never be 0 after first liquidity minting event -see assert at the end- if first batchSettlement
             //  is called without minting, tx will fail anyways
